@@ -1,0 +1,34 @@
+name: Cache cleanup
+
+# Deletes cargo-cache-action caches older than 24 hours (the newest
+# cache of every key family is protected). Runs weekly and on demand.
+# Start with dry-run on demand before enabling the schedule for real.
+
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Report only, delete nothing
+        type: boolean
+        default: true
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Delete expired caches
+        uses: <owner>/cargo-cache-action/cleanup@v0.1.0
+        with:
+          max-age-hours: '24'
+          key-prefix: edge-gateway-ci-
+          keep-latest-per-family: '1'
+          dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}

@@ -1,0 +1,79 @@
+name: CI
+
+# Example: an existing two-workspace CI workflow (gateway + bench)
+# migrated to cargo-cache-action. The generate-manifests and
+# actions/cache steps collapse into one restore at the top and one
+# save at the bottom. Saves run only on main: pull requests restore
+# the main cache but never write one.
+
+on:
+  push:
+    paths:
+      - "bench/**"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_TOOLCHAIN: nightly-2026-10-01
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: edge-gateway (+ optional bench) tests
+    runs-on: ubuntu-latest
+    container:
+      image: rust:slim
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install pinned nightly
+        run: rustup toolchain install "${RUST_TOOLCHAIN}" --profile minimal
+
+      - name: Restore Cargo caches
+        id: cargo_cache
+        uses: <owner>/cargo-cache-action@v0.1.0
+        with:
+          key-prefix: edge-gateway-ci
+          profile-name: ci
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          runner-os: ${{ runner.os }}
+          runner-arch: ${{ runner.arch }}
+          manifests: |
+            Cargo.toml
+            bench/Cargo.toml
+            bench/*/Cargo.toml
+          lockfiles: |
+            Cargo.lock
+            bench/Cargo.lock
+
+      - name: Test gateway
+        run: cargo +"${RUST_TOOLCHAIN}" test --workspace
+
+      - name: Test bench
+        if: ${{ hashFiles('bench/Cargo.toml') != '' }}
+        working-directory: bench
+        run: cargo +"${RUST_TOOLCHAIN}" test --workspace
+
+      - name: Save Cargo caches
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: <owner>/cargo-cache-action/save@v0.1.0
+        with:
+          registry-key: ${{ steps.cargo_cache.outputs.registry-key }}
+          target-key: ${{ steps.cargo_cache.outputs.target-key }}
+          registry-paths: ${{ steps.cargo_cache.outputs.registry-paths }}
+          manifests: Cargo.toml

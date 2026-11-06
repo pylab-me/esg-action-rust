@@ -1,0 +1,105 @@
+name: Cargo Cache (cleanup)
+description: >-
+  Delete this action's expired caches through the GitHub REST API:
+  entries older than a configurable age limit (24 hours by default),
+  with the newest cache of every key family protected. Run from a
+  dedicated workflow or job with actions: write permission; the cache
+  saved by a job cannot be deleted inside that same job, because
+  actions/cache saves in its post phase.
+author: cargo-cache-action contributors
+branding:
+  icon: trash-2
+  color: red
+
+inputs:
+  max-age-hours:
+    description: Delete owned caches whose last access is older than this many hours. 24 is supported; lower values are accepted.
+    required: false
+    default: '24'
+  key-prefix:
+    description: Only caches whose key starts with this prefix are eligible. Must match the restore action's key-prefix.
+    required: false
+    default: cargo-
+  keep-latest-per-family:
+    description: Newest entries per key family that are never deleted, however old. Set 0 for an unconditional age cutoff.
+    required: false
+    default: '1'
+  max-total-gb:
+    description: Optional repository cache budget in GB. Beyond it, least-recently-accessed owned caches are deleted. 0 disables the budget rule.
+    required: false
+    default: '0'
+  dry-run:
+    description: Report what would be deleted without deleting anything.
+    required: false
+    default: 'true'
+  token:
+    description: 'Token with the actions write permission on the repository. Defaults to the workflow github.token.'
+    required: false
+    default: ''
+  repo:
+    description: Repository as owner/name. Defaults to the workflow's repository.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Probe for Python 3.14+
+      id: probe_python
+      shell: bash
+      run: |
+        py=""
+        for candidate in python3.14 python3 python; do
+          if command -v "${candidate}" >/dev/null 2>&1 && "${candidate}" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 14) else 1)' 2>/dev/null; then
+            py="$(command -v "${candidate}")"
+            break
+          fi
+        done
+        echo "python-path=${py}" >> "${GITHUB_OUTPUT}"
+
+    - name: Set up Python 3.14
+      id: setup_python
+      if: steps.probe_python.outputs.python-path == ''
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.14'
+
+    - name: Resolve Python executable
+      id: resolve_python
+      shell: bash
+      env:
+        PROBED: ${{ steps.probe_python.outputs.python-path }}
+        PROVISIONED: ${{ steps.setup_python.outputs.python-path }}
+      run: |
+        py="${PROBED:-${PROVISIONED}}"
+        if [ -d "${py}" ]; then
+          if [ -x "${py}/python" ]; then py="${py}/python"; else py="${py}/python.exe"; fi
+        fi
+        if [ -z "${py}" ] || [ ! -x "${py}" ]; then
+          echo "::error::Python 3.14+ is required but none was found or provisioned."
+          exit 1
+        fi
+        echo "python-path=${py}" >> "${GITHUB_OUTPUT}"
+        "${py}" --version
+
+    - name: Delete expired caches
+      shell: bash
+      env:
+        CCA_PY: ${{ steps.resolve_python.outputs.python-path }}
+        GITHUB_TOKEN: ${{ inputs.token != '' && inputs.token || github.token }}
+        CCA_REPO: ${{ inputs.repo }}
+        CCA_MAX_AGE: ${{ inputs.max-age-hours }}
+        CCA_PREFIX: ${{ inputs.key-prefix }}
+        CCA_KEEP: ${{ inputs.keep-latest-per-family }}
+        CCA_BUDGET: ${{ inputs.max-total-gb }}
+        CCA_DRY_RUN: ${{ inputs.dry-run }}
+      run: |
+        args=(
+          --max-age-hours "${CCA_MAX_AGE}"
+          --key-prefix "${CCA_PREFIX}"
+          --keep-latest-per-family "${CCA_KEEP}"
+          --max-total-gb "${CCA_BUDGET}"
+        )
+        if [ -n "${CCA_REPO}" ]; then args+=(--repo "${CCA_REPO}"); fi
+        if [ "${CCA_DRY_RUN}" = "true" ]; then args+=(--dry-run); fi
+        "${CCA_PY}" "${GITHUB_ACTION_PATH}/../scripts/cleanup.py" "${args[@]}"

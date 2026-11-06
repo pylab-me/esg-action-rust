@@ -1,0 +1,135 @@
+name: Cargo Cache (save)
+description: >-
+  Prune the workspace's own build products from the target directory,
+  then save the Cargo registry and target caches with the exact keys the
+  restore action produced. Thin composite wrapper around
+  actions/cache/save. Requires Python 3.14+ (provisioned when missing).
+author: cargo-cache-action contributors
+branding:
+  icon: archive
+  color: orange
+
+inputs:
+  registry-key:
+    description: Exact registry key from the restore action's registry-key output.
+    required: true
+  target-key:
+    description: Exact target key from the restore action's target-key output.
+    required: true
+  registry-paths:
+    description: Registry cache paths from the restore action's registry-paths output. Resolved from CARGO_HOME when omitted.
+    required: false
+    default: ''
+  target-paths:
+    description: Target directories to save, one per line.
+    required: false
+    default: target
+  workspace:
+    description: Directory containing the Cargo workspace, relative to the repository root.
+    required: false
+    default: '.'
+  manifests:
+    description: Cargo.toml files (no globs) used to derive local package names for pruning.
+    required: false
+    default: Cargo.toml
+  prune:
+    description: Remove local package artifacts and incremental data before saving.
+    required: false
+    default: 'true'
+  save-registry:
+    description: Save the registry cache.
+    required: false
+    default: 'true'
+  save-target:
+    description: Save the target cache.
+    required: false
+    default: 'true'
+  enable-cross-os-archive:
+    description: Allow the registry cache archive to be shared across operating systems. Must match the restore side.
+    required: false
+    default: 'false'
+
+outputs:
+  pruned-bytes:
+    description: Bytes removed from the target directories before saving.
+    value: ${{ steps.prune.outputs.pruned-bytes }}
+
+runs:
+  using: composite
+  steps:
+    - name: Probe for Python 3.14+
+      id: probe_python
+      shell: bash
+      run: |
+        py=""
+        for candidate in python3.14 python3 python; do
+          if command -v "${candidate}" >/dev/null 2>&1 && "${candidate}" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 14) else 1)' 2>/dev/null; then
+            py="$(command -v "${candidate}")"
+            break
+          fi
+        done
+        echo "python-path=${py}" >> "${GITHUB_OUTPUT}"
+
+    - name: Set up Python 3.14
+      id: setup_python
+      if: steps.probe_python.outputs.python-path == ''
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.14'
+
+    - name: Resolve Python executable
+      id: resolve_python
+      shell: bash
+      env:
+        PROBED: ${{ steps.probe_python.outputs.python-path }}
+        PROVISIONED: ${{ steps.setup_python.outputs.python-path }}
+      run: |
+        py="${PROBED:-${PROVISIONED}}"
+        if [ -d "${py}" ]; then
+          if [ -x "${py}/python" ]; then py="${py}/python"; else py="${py}/python.exe"; fi
+        fi
+        if [ -z "${py}" ] || [ ! -x "${py}" ]; then
+          echo "::error::Python 3.14+ is required but none was found or provisioned."
+          exit 1
+        fi
+        echo "python-path=${py}" >> "${GITHUB_OUTPUT}"
+        "${py}" --version
+
+    - name: Resolve registry paths
+      id: resolve_paths
+      if: inputs.registry-paths == ''
+      shell: bash
+      env:
+        CCA_PY: ${{ steps.resolve_python.outputs.python-path }}
+      run: '"${CCA_PY}" "${GITHUB_ACTION_PATH}/../scripts/paths.py"'
+
+    - name: Prune local build products
+      id: prune
+      if: inputs.prune == 'true'
+      shell: bash
+      env:
+        CCA_PY: ${{ steps.resolve_python.outputs.python-path }}
+        CCA_WORKSPACE: ${{ inputs.workspace }}
+        CCA_MANIFESTS: ${{ inputs.manifests }}
+        CCA_TARGETS: ${{ inputs.target-paths }}
+      run: |
+        "${CCA_PY}" "${GITHUB_ACTION_PATH}/../scripts/prune_target.py" \
+          --workspace "${CCA_WORKSPACE}" \
+          --manifests "${CCA_MANIFESTS}" \
+          --targets "${CCA_TARGETS}" \
+          || echo "::warning::cargo-cache-action pruning failed; saving the target directory unpruned."
+
+    - name: Save registry cache
+      if: inputs.save-registry == 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ inputs.registry-paths != '' && inputs.registry-paths || steps.resolve_paths.outputs.registry-paths }}
+        key: ${{ inputs.registry-key }}
+        enableCrossOsArchive: ${{ inputs.enable-cross-os-archive }}
+
+    - name: Save target cache
+      if: inputs.save-target == 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ inputs.target-paths }}
+        key: ${{ inputs.target-key }}

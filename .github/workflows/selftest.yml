@@ -1,0 +1,101 @@
+name: Selftest
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: selftest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Unit tests (Python 3.14)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - name: Compile all scripts
+        run: python -m compileall -q scripts tests
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+  yaml:
+    name: YAML syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - name: Parse every action and workflow file
+        run: |
+          python -m pip install --quiet pyyaml
+          python - << 'PY'
+          import pathlib
+          import yaml
+
+          files = sorted(pathlib.Path(".").rglob("*.yml"))
+          files += sorted(pathlib.Path(".").rglob("*.yaml"))
+          for path in files:
+              if ".git" in path.parts:
+                  continue
+              with path.open(encoding="utf-8") as handle:
+                  yaml.safe_load(handle)
+              print("ok", path)
+          PY
+
+  hash-matrix:
+    name: dep-hash identical on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - name: Compute fixture dep-hash
+        shell: bash
+        run: |
+          python scripts/keygen.py --workspace tests/fixtures/proj \
+            --os "${{ runner.os }}" --arch "${{ runner.arch }}" \
+            | python -c 'import json,sys; print(json.load(sys.stdin)["dep_hash"])' \
+            > dep-hash.txt
+          cat dep-hash.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dep-hash-${{ matrix.os }}
+          path: dep-hash.txt
+          retention-days: 1
+
+  hash-equality:
+    name: dep-hash equal across platforms
+    needs: hash-matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: dep-hash-*
+          path: per-os
+      - name: Compare
+        shell: bash
+        run: |
+          set -euo pipefail
+          count="$(find per-os -name dep-hash.txt -exec cat {} \; | sort -u | wc -l)"
+          find per-os -name dep-hash.txt -exec echo {} \; -exec cat {} \;
+          test "${count}" -eq 1

@@ -1,0 +1,174 @@
+name: Cargo Cache (restore)
+description: >-
+  Restore Cargo registry and target caches with a platform-independent,
+  version-insensitive dependency hash computed by a Python 3.14 script.
+  Thin composite wrapper around actions/cache/restore; pair with the
+  save action from this repository at the end of the job.
+author: cargo-cache-action contributors
+branding:
+  icon: archive
+  color: orange
+
+inputs:
+  workspace:
+    description: Directory containing the Cargo workspace, relative to the repository root.
+    required: false
+    default: '.'
+  manifests:
+    description: Cargo.toml files or globs, one per line or comma separated.
+    required: false
+    default: Cargo.toml
+  lockfiles:
+    description: Cargo.lock files or globs. Missing files are ignored; the cache never requires a lockfile.
+    required: false
+    default: Cargo.lock
+  key-prefix:
+    description: First segment of every cache key. Keep one prefix per project.
+    required: false
+    default: cargo
+  profile-name:
+    description: Human-readable profile segment (ci, release, debug). The effective profile is also hashed automatically.
+    required: false
+    default: ci
+  target-triple:
+    description: Rust target triple being built, or empty for the host target.
+    required: false
+    default: ''
+  toolchain:
+    description: Toolchain label (for example nightly-2026-10-01). Also hashed into the profile hash.
+    required: false
+    default: ''
+  runner-os:
+    description: Platform segment for the target key. Pass ${{ runner.os }}.
+    required: false
+    default: ''
+  runner-arch:
+    description: Architecture segment for the target key. Pass ${{ runner.arch }}.
+    required: false
+    default: ''
+  target-paths:
+    description: Target directories for the target cache, one per line.
+    required: false
+    default: target
+  enable-cross-os-archive:
+    description: Allow the registry cache archive to be shared across operating systems.
+    required: false
+    default: 'false'
+
+outputs:
+  dep-hash:
+    description: Platform-independent hash of the normalised dependency graph.
+    value: ${{ steps.keygen.outputs.dep-hash }}
+  profile-hash:
+    description: Hash of toolchain, RUSTFLAGS, CARGO_PROFILE_* variables and cargo config files.
+    value: ${{ steps.keygen.outputs.profile-hash }}
+  registry-key:
+    description: Exact key of the registry cache.
+    value: ${{ steps.keygen.outputs.registry-key }}
+  target-key:
+    description: Exact key of the target cache.
+    value: ${{ steps.keygen.outputs.target-key }}
+  registry-paths:
+    description: Resolved registry cache paths (CARGO_HOME aware).
+    value: ${{ steps.keygen.outputs.registry-paths }}
+  registry-cache-hit:
+    description: Whether the registry restore hit the exact key.
+    value: ${{ steps.restore_registry.outputs.cache-hit }}
+  target-cache-hit:
+    description: Whether the target restore hit the exact key.
+    value: ${{ steps.restore_target.outputs.cache-hit }}
+  cache-hit:
+    description: Whether the target restore hit the exact key (primary cache).
+    value: ${{ steps.restore_target.outputs.cache-hit }}
+  fallback:
+    description: True when TOML parsing failed and raw file hashing was used instead.
+    value: ${{ steps.keygen.outputs.fallback }}
+
+runs:
+  using: composite
+  steps:
+    - name: Probe for Python 3.14+
+      id: probe_python
+      shell: bash
+      run: |
+        py=""
+        for candidate in python3.14 python3 python; do
+          if command -v "${candidate}" >/dev/null 2>&1 && "${candidate}" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 14) else 1)' 2>/dev/null; then
+            py="$(command -v "${candidate}")"
+            break
+          fi
+        done
+        echo "python-path=${py}" >> "${GITHUB_OUTPUT}"
+
+    - name: Set up Python 3.14
+      id: setup_python
+      if: steps.probe_python.outputs.python-path == ''
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.14'
+
+    - name: Resolve Python executable
+      id: resolve_python
+      shell: bash
+      env:
+        PROBED: ${{ steps.probe_python.outputs.python-path }}
+        PROVISIONED: ${{ steps.setup_python.outputs.python-path }}
+      run: |
+        py="${PROBED:-${PROVISIONED}}"
+        if [ -d "${py}" ]; then
+          if [ -x "${py}/python" ]; then py="${py}/python"; else py="${py}/python.exe"; fi
+        fi
+        if [ -z "${py}" ] || [ ! -x "${py}" ]; then
+          echo "::error::Python 3.14+ is required but none was found or provisioned."
+          exit 1
+        fi
+        echo "python-path=${py}" >> "${GITHUB_OUTPUT}"
+        "${py}" --version
+
+    - name: Compute cache keys
+      id: keygen
+      shell: bash
+      env:
+        CCA_PY: ${{ steps.resolve_python.outputs.python-path }}
+        CCA_WORKSPACE: ${{ inputs.workspace }}
+        CCA_MANIFESTS: ${{ inputs.manifests }}
+        CCA_LOCKFILES: ${{ inputs.lockfiles }}
+        CCA_PREFIX: ${{ inputs.key-prefix }}
+        CCA_PROFILE: ${{ inputs.profile-name }}
+        CCA_TRIPLE: ${{ inputs.target-triple }}
+        CCA_TOOLCHAIN: ${{ inputs.toolchain }}
+        CCA_OS: ${{ inputs.runner-os }}
+        CCA_ARCH: ${{ inputs.runner-arch }}
+      run: |
+        args=(
+          --workspace "${CCA_WORKSPACE}"
+          --manifests "${CCA_MANIFESTS}"
+          --lockfiles "${CCA_LOCKFILES}"
+          --prefix "${CCA_PREFIX}"
+          --profile-name "${CCA_PROFILE}"
+          --target-triple "${CCA_TRIPLE}"
+          --toolchain "${CCA_TOOLCHAIN}"
+          --os "${CCA_OS}"
+          --arch "${CCA_ARCH}"
+        )
+        if ! "${CCA_PY}" "${GITHUB_ACTION_PATH}/scripts/keygen.py" "${args[@]}"; then
+          echo "::warning::cargo-cache-action could not parse the manifests; falling back to raw file hashing. The build is unaffected."
+          "${CCA_PY}" "${GITHUB_ACTION_PATH}/scripts/keygen.py" "${args[@]}" --fallback
+        fi
+
+    - name: Restore registry cache
+      id: restore_registry
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ steps.keygen.outputs.registry-paths }}
+        key: ${{ steps.keygen.outputs.registry-key }}
+        restore-keys: ${{ steps.keygen.outputs.registry-restore-keys }}
+        enableCrossOsArchive: ${{ inputs.enable-cross-os-archive }}
+
+    - name: Restore target cache
+      id: restore_target
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ inputs.target-paths }}
+        key: ${{ steps.keygen.outputs.target-key }}
+        restore-keys: ${{ steps.keygen.outputs.target-restore-keys }}
