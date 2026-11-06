@@ -39,11 +39,11 @@ inputs:
     required: false
     default: ''
   runner-os:
-    description: Platform segment for the target key. Pass ${{ runner.os }}.
+    description: Platform segment for the target key. Optional override; by default the RUNNER_OS environment value is used.
     required: false
     default: ''
   runner-arch:
-    description: Architecture segment for the target key. Pass ${{ runner.arch }}.
+    description: Architecture segment for the target key. Optional override; by default the RUNNER_ARCH environment value is used.
     required: false
     default: ''
   target-paths:
@@ -140,6 +140,8 @@ runs:
         CCA_OS: ${{ inputs.runner-os }}
         CCA_ARCH: ${{ inputs.runner-arch }}
       run: |
+        cca_os="${CCA_OS:-${RUNNER_OS:-}}"
+        cca_arch="${CCA_ARCH:-${RUNNER_ARCH:-}}"
         args=(
           --workspace "${CCA_WORKSPACE}"
           --manifests "${CCA_MANIFESTS}"
@@ -148,8 +150,8 @@ runs:
           --profile-name "${CCA_PROFILE}"
           --target-triple "${CCA_TRIPLE}"
           --toolchain "${CCA_TOOLCHAIN}"
-          --os "${CCA_OS}"
-          --arch "${CCA_ARCH}"
+          --os "${cca_os}"
+          --arch "${cca_arch}"
         )
         if ! "${CCA_PY}" "${GITHUB_ACTION_PATH}/scripts/keygen.py" "${args[@]}"; then
           echo "::warning::cargo-cache-action could not parse the manifests; falling back to raw file hashing. The build is unaffected."

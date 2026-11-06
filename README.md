@@ -49,7 +49,7 @@ steps:
 
   - name: Restore Cargo caches
     id: cargo_cache
-    uses: pylab-me/esg-action-rust@v0.1.0
+    uses: pylab-me/esg-action-rust@v0.1.1
     with:
       key-prefix: my-project-ci
       profile-name: ci                 # ci | release | debug | any label
@@ -69,7 +69,7 @@ steps:
 
   - name: Save Cargo caches
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    uses: pylab-me/esg-action-rust/save@v0.1.0
+    uses: pylab-me/esg-action-rust/save@v0.1.1
     with:
       registry-key: ${{ steps.cargo_cache.outputs.registry-key }}
       target-key: ${{ steps.cargo_cache.outputs.target-key }}
@@ -178,7 +178,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: pylab-me/esg-action-rust/cleanup@v0.1.0
+      - uses: pylab-me/esg-action-rust/cleanup@v0.1.1
         with:
           max-age-hours: '24'
           key-prefix: my-project-ci-

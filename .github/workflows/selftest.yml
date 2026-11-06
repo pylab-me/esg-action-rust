@@ -75,7 +75,7 @@ jobs:
           python scripts/keygen.py --workspace tests/fixtures/proj \
             --os "${{ runner.os }}" --arch "${{ runner.arch }}" \
             | python -c 'import json,sys; print(json.load(sys.stdin)["dep_hash"])' \
-            > dep-hash.txt
+            | tr -d '\r' > dep-hash.txt
           cat dep-hash.txt
       - uses: actions/upload-artifact@v7
         with:
@@ -96,6 +96,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          count="$(find per-os -name dep-hash.txt -exec cat {} \; | sort -u | wc -l)"
+          count="$(find per-os -name dep-hash.txt -exec cat {} \; | tr -d '\r' | sort -u | wc -l | tr -d ' ')"
           find per-os -name dep-hash.txt -exec echo {} \; -exec cat {} \;
           test "${count}" -eq 1
