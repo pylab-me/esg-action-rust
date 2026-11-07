@@ -56,6 +56,35 @@ jobs:
               print("ok", path)
           PY
 
+  setup:
+    name: Setup smoke on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Run the setup action
+        id: setup_rust
+        uses: ./setup
+        with:
+          toolchain: stable
+          components: rustfmt
+      - name: Outputs must be populated and rustc must run
+        shell: bash
+        env:
+          ESG_TC_OUT: ${{ steps.setup_rust.outputs.toolchain }}
+          ESG_RUSTC_OUT: ${{ steps.setup_rust.outputs.rustc-version }}
+        run: |
+          set -euo pipefail
+          test -n "${ESG_TC_OUT}"
+          test -n "${ESG_RUSTC_OUT}"
+          rustc --version
+          cargo --version
+          rustc --version | grep -F "${ESG_RUSTC_OUT}" || test "${ESG_RUSTC_OUT}" = "$(rustc --version)"
+
   hash-matrix:
     name: dep-hash identical on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

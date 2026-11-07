@@ -1,6 +1,6 @@
 name: Cache cleanup
 
-# Deletes cargo-cache-action caches older than 24 hours (the newest
+# Deletes esg-action-rust caches older than 48 hours (the newest
 # cache of every key family is protected). Runs weekly and on demand.
 # Start with dry-run on demand before enabling the schedule for real.
 
@@ -26,9 +26,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Delete expired caches
-        uses: <owner>/cargo-cache-action/cleanup@v0.1.0
+        uses: pylab-me/esg-action-rust/cleanup@v0.2.0
         with:
-          max-age-hours: '24'
+          max-age-hours: '48'
           key-prefix: edge-gateway-ci-
           keep-latest-per-family: '1'
           dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}

@@ -54,6 +54,14 @@ inputs:
     description: Allow the registry cache archive to be shared across operating systems.
     required: false
     default: 'false'
+  restore-registry:
+    description: Restore the registry cache. Disable to restore only the target cache.
+    required: false
+    default: 'true'
+  restore-target:
+    description: Restore the target cache. Disable for jobs that never compile, such as a cargo update report, so the target archive is not downloaded for nothing.
+    required: false
+    default: 'true'
 
 outputs:
   dep-hash:
@@ -160,6 +168,7 @@ runs:
 
     - name: Restore registry cache
       id: restore_registry
+      if: inputs.restore-registry == 'true'
       uses: actions/cache/restore@v6
       with:
         path: ${{ steps.keygen.outputs.registry-paths }}
@@ -169,6 +178,7 @@ runs:
 
     - name: Restore target cache
       id: restore_target
+      if: inputs.restore-target == 'true'
       uses: actions/cache/restore@v6
       with:
         path: ${{ inputs.target-paths }}

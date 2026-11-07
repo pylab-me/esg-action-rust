@@ -1,0 +1,198 @@
+name: Rust Setup
+description: >-
+  Provision a Rust toolchain with rustup: the toolchain itself, one
+  target, components, optional apt system packages on Linux, and an
+  optional Python for the other esg-action-rust actions. The resolved
+  toolchain and target are outputs, so a workflow can feed them to the
+  restore action and the cache key can never describe a different
+  toolchain than the one actually installed.
+author: esg-action-rust contributors
+branding:
+  icon: settings
+  color: orange
+
+inputs:
+  toolchain:
+    description: Toolchain to install, for example nightly-2026-10-01 or 1.85.0. When empty, the channel from rust-toolchain.toml or a rust-toolchain file is used, falling back to stable.
+    required: false
+    default: ''
+  target:
+    description: Target triple to add for the toolchain, for example x86_64-unknown-linux-musl. Empty adds no target.
+    required: false
+    default: ''
+  components:
+    description: Components to add, comma or space separated, for example rustfmt, clippy.
+    required: false
+    default: ''
+  profile:
+    description: rustup installation profile.
+    required: false
+    default: minimal
+  system-packages:
+    description: apt packages to install first, space or comma separated, for example musl-tools. Linux only; fails on other operating systems instead of silently skipping.
+    required: false
+    default: ''
+  python-version:
+    description: When set, also ensure a Python of at least this version, for example 3.14, provisioning one only when the runner has none. Empty skips Python entirely.
+    required: false
+    default: ''
+  set-default:
+    description: Make the installed toolchain the rustup default, so plain cargo commands use it. Disable when several toolchains are installed side by side and selected with the plus syntax.
+    required: false
+    default: 'true'
+
+outputs:
+  toolchain:
+    description: The toolchain that was resolved and installed.
+    value: ${{ steps.resolve.outputs.toolchain }}
+  target:
+    description: The target triple that was requested and added.
+    value: ${{ steps.resolve.outputs.target }}
+  rustc-version:
+    description: The rustc --version string of the installed toolchain.
+    value: ${{ steps.verify.outputs.rustc-version }}
+  python-path:
+    description: Path of the ensured Python executable, when python-version was set.
+    value: ${{ steps.resolve_python.outputs.python-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve toolchain
+      id: resolve
+      shell: bash
+      env:
+        ESG_TOOLCHAIN: ${{ inputs.toolchain }}
+        ESG_TARGET: ${{ inputs.target }}
+      run: |
+        tc="${ESG_TOOLCHAIN}"
+        if [ -z "${tc}" ] && [ -f rust-toolchain.toml ]; then
+          tc="$(sed -nE 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' rust-toolchain.toml | head -n 1)"
+        fi
+        if [ -z "${tc}" ] && [ -f rust-toolchain ]; then
+          tc="$(head -n 1 rust-toolchain | tr -d '[:space:]')"
+        fi
+        if [ -z "${tc}" ]; then
+          tc="stable"
+        fi
+        echo "toolchain=${tc}" >> "${GITHUB_OUTPUT}"
+        echo "target=${ESG_TARGET}" >> "${GITHUB_OUTPUT}"
+        echo "Resolved toolchain: ${tc}"
+
+    - name: Install system packages
+      if: inputs.system-packages != ''
+      shell: bash
+      env:
+        ESG_PACKAGES: ${{ inputs.system-packages }}
+      run: |
+        set -euo pipefail
+        if [ "$(uname -s)" != "Linux" ]; then
+          echo "::error::system-packages is only supported on Linux runners (apt)."
+          exit 1
+        fi
+        if ! command -v apt-get >/dev/null 2>&1; then
+          echo "::error::apt-get not found; system-packages needs a Debian-based image or runner."
+          exit 1
+        fi
+        # shellcheck disable=SC2086
+        packages="$(echo ${ESG_PACKAGES} | tr ',' ' ')"
+        if [ "$(id -u)" = "0" ]; then
+          apt-get update
+          # shellcheck disable=SC2086
+          apt-get install -y --no-install-recommends ${packages}
+        elif command -v sudo >/dev/null 2>&1; then
+          sudo apt-get update
+          # shellcheck disable=SC2086
+          sudo apt-get install -y --no-install-recommends ${packages}
+        else
+          echo "::error::Installing system packages needs root or sudo."
+          exit 1
+        fi
+
+    - name: Install Rust toolchain
+      shell: bash
+      env:
+        ESG_TC: ${{ steps.resolve.outputs.toolchain }}
+        ESG_TARGET: ${{ inputs.target }}
+        ESG_COMPONENTS: ${{ inputs.components }}
+        ESG_PROFILE: ${{ inputs.profile }}
+        ESG_SET_DEFAULT: ${{ inputs.set-default }}
+      run: |
+        set -euo pipefail
+        if ! command -v rustup >/dev/null 2>&1; then
+          echo "::error::rustup not found. GitHub-hosted runners and the official rust images provide it; install rustup first on a bare self-hosted runner."
+          exit 1
+        fi
+        args=(toolchain install "${ESG_TC}" --profile "${ESG_PROFILE}")
+        if [ -n "${ESG_TARGET}" ]; then
+          args+=(--target "${ESG_TARGET}")
+        fi
+        components="$(echo "${ESG_COMPONENTS}" | tr ',' ' ' | xargs || true)"
+        for component in ${components}; do
+          args+=(--component "${component}")
+        done
+        rustup "${args[@]}"
+        if [ "${ESG_SET_DEFAULT}" = "true" ]; then
+          rustup default "${ESG_TC}"
+        fi
+
+    - name: Report toolchain versions
+      id: verify
+      shell: bash
+      env:
+        ESG_TC: ${{ steps.resolve.outputs.toolchain }}
+      run: |
+        set -euo pipefail
+        rustc_version="$(rustc +"${ESG_TC}" --version)"
+        echo "rustc-version=${rustc_version}" >> "${GITHUB_OUTPUT}"
+        echo "${rustc_version}"
+        rustc +"${ESG_TC}" --version --verbose
+        cargo +"${ESG_TC}" --version
+        {
+          echo "### esg setup"
+          echo
+          echo "- toolchain: \`${ESG_TC}\`"
+          echo "- rustc: \`${rustc_version}\`"
+        } >> "${GITHUB_STEP_SUMMARY}"
+
+    - name: Probe for Python
+      id: probe_python
+      if: inputs.python-version != ''
+      shell: bash
+      env:
+        ESG_PYVER: ${{ inputs.python-version }}
+      run: |
+        py=""
+        for candidate in python3.14 python3 python; do
+          if command -v "${candidate}" >/dev/null 2>&1 && "${candidate}" -c "import sys; raise SystemExit(0 if sys.version_info >= tuple(int(p) for p in '${ESG_PYVER}'.split('.')) else 1)" 2>/dev/null; then
+            py="$(command -v "${candidate}")"
+            break
+          fi
+        done
+        echo "python-path=${py}" >> "${GITHUB_OUTPUT}"
+
+    - name: Set up Python
+      id: setup_python
+      if: inputs.python-version != '' && steps.probe_python.outputs.python-path == ''
+      uses: actions/setup-python@v7
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Resolve Python executable
+      id: resolve_python
+      if: inputs.python-version != ''
+      shell: bash
+      env:
+        PROBED: ${{ steps.probe_python.outputs.python-path }}
+        PROVISIONED: ${{ steps.setup_python.outputs.python-path }}
+      run: |
+        py="${PROBED:-${PROVISIONED}}"
+        if [ -d "${py}" ]; then
+          if [ -x "${py}/python" ]; then py="${py}/python"; else py="${py}/python.exe"; fi
+        fi
+        if [ -z "${py}" ] || [ ! -x "${py}" ]; then
+          echo "::error::The requested Python could not be found or provisioned."
+          exit 1
+        fi
+        echo "python-path=${py}" >> "${GITHUB_OUTPUT}"
+        "${py}" --version

@@ -41,18 +41,19 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install pinned nightly
-        run: rustup toolchain install "${RUST_TOOLCHAIN}" --profile minimal
+      - name: Set up pinned nightly
+        id: setup_rust
+        uses: pylab-me/esg-action-rust/setup@v0.2.0
+        with:
+          toolchain: ${{ steps.setup_rust.outputs.toolchain }}
 
       - name: Restore Cargo caches
         id: cargo_cache
-        uses: <owner>/cargo-cache-action@v0.1.0
+        uses: pylab-me/esg-action-rust@v0.2.0
         with:
           key-prefix: edge-gateway-ci
           profile-name: ci
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-          runner-os: ${{ runner.os }}
-          runner-arch: ${{ runner.arch }}
           manifests: |
             Cargo.toml
             bench/Cargo.toml
@@ -71,7 +72,7 @@ jobs:
 
       - name: Save Cargo caches
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: <owner>/cargo-cache-action/save@v0.1.0
+        uses: pylab-me/esg-action-rust/save@v0.2.0
         with:
           registry-key: ${{ steps.cargo_cache.outputs.registry-key }}
           target-key: ${{ steps.cargo_cache.outputs.target-key }}

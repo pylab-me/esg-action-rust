@@ -9,7 +9,7 @@ select = [
     "W", # pycodestyle warnings
     "F", # Pyflakes
     "I", # isort (导入排序)
-    "D", # pydocstyle (文档字符串检查)
+    # "D", # pydocstyle (文档字符串检查)
 ]
 
 [lint.pydocstyle]

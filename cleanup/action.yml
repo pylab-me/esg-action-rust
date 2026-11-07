@@ -1,7 +1,7 @@
 name: Cargo Cache (cleanup)
 description: >-
   Delete this action's expired caches through the GitHub REST API:
-  entries older than a configurable age limit (24 hours by default),
+  entries older than a configurable age limit (48 hours by default),
   with the newest cache of every key family protected. Run from a
   dedicated workflow or job with actions: write permission; the cache
   saved by a job cannot be deleted inside that same job, because
@@ -13,9 +13,9 @@ branding:
 
 inputs:
   max-age-hours:
-    description: Delete owned caches whose last access is older than this many hours. 24 is supported; lower values are accepted.
+    description: Delete owned caches whose last access is older than this many hours. Any value is accepted, for example 24 for a stricter daily cutoff.
     required: false
-    default: '24'
+    default: '48'
   key-prefix:
     description: Only caches whose key starts with this prefix are eligible. Must match the restore action's key-prefix.
     required: false

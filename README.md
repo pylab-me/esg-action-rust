@@ -8,8 +8,6 @@ library only); the JavaScript actions `actions/cache/restore` and
 download behaviour remain GitHub's maintained implementation while every key,
 pruning and retention decision stays in this repository.
 
-Replace `<owner>` in the examples with the account that hosts this repository.
-
 ## Why
 
 Hashing lockfiles directly, the conventional `actions/cache` setup, has three
@@ -25,13 +23,14 @@ failure modes for a workspace that releases by bumping its own version:
 This action parses the TOML once and hashes a canonical form instead, which
 removes all three.
 
-## The three actions
+## The four actions
 
 | Action | Reference | Purpose |
 | --- | --- | --- |
-| restore | `pylab-me/esg-action-rust@v0.1.0` | Compute keys, restore the registry and target caches |
-| save | `pylab-me/esg-action-rust/save@v0.1.0` | Prune local build products, save both caches under the same keys |
-| cleanup | `pylab-me/esg-action-rust/cleanup@v0.1.0` | Delete expired caches owned by this action |
+| setup | `pylab-me/esg-action-rust/setup@v0.2.0` | Provision the Rust toolchain, target, components and optional system packages and Python |
+| restore | `pylab-me/esg-action-rust@v0.2.0` | Compute keys, restore the registry and target caches |
+| save | `pylab-me/esg-action-rust/save@v0.2.0` | Prune local build products, save both caches under the same keys |
+| cleanup | `pylab-me/esg-action-rust/cleanup@v0.2.0` | Delete expired caches owned by this action |
 
 Composite actions have no post-job hook — that is a JavaScript action
 capability — so save is an explicit second step at the end of the job rather
@@ -47,16 +46,22 @@ steps:
     with:
       persist-credentials: false
 
+  - name: Set up the Rust toolchain
+    id: setup_rust
+    uses: pylab-me/esg-action-rust/setup@v0.2.0
+    with:
+      toolchain: nightly-2026-10-01
+      target: ${{ env.TARGET }}        # optional
+      system-packages: musl-tools      # optional, Linux only
+
   - name: Restore Cargo caches
     id: cargo_cache
-    uses: pylab-me/esg-action-rust@v0.1.1
+    uses: pylab-me/esg-action-rust@v0.2.0
     with:
       key-prefix: my-project-ci
       profile-name: ci                 # ci | release | debug | any label
-      toolchain: ${{ env.RUST_TOOLCHAIN }}
-      target-triple: ${{ env.TARGET }} # optional
-      runner-os: ${{ runner.os }}
-      runner-arch: ${{ runner.arch }}
+      toolchain: ${{ steps.setup_rust.outputs.toolchain }}
+      target-triple: ${{ steps.setup_rust.outputs.target }}
       manifests: |
         Cargo.toml
         bench/Cargo.toml
@@ -69,7 +74,7 @@ steps:
 
   - name: Save Cargo caches
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    uses: pylab-me/esg-action-rust/save@v0.1.1
+    uses: pylab-me/esg-action-rust/save@v0.2.0
     with:
       registry-key: ${{ steps.cargo_cache.outputs.registry-key }}
       target-key: ${{ steps.cargo_cache.outputs.target-key }}
@@ -90,9 +95,11 @@ migration and a scheduled cleanup.
 | `profile-name` | `ci` | Human-readable profile label |
 | `target-triple` | host | Rust target triple segment of the target key |
 | `toolchain` | — | Toolchain label, also hashed into the profile hash |
-| `runner-os` / `runner-arch` | — | Platform segments; pass `${{ runner.os }}` / `${{ runner.arch }}` |
+| `runner-os` / `runner-arch` | from `RUNNER_OS` / `RUNNER_ARCH` | Platform segments of the target key. The runner environment supplies them automatically; set these only to override. (An action manifest cannot reference the `runner` context in its metadata, which is why the values come from the environment.) |
 | `target-paths` | `target` | Target directories, one per line |
 | `enable-cross-os-archive` | `false` | Share the registry archive across operating systems |
+| `restore-registry` | `true` | Restore the registry cache; disable to restore only the target cache |
+| `restore-target` | `true` | Restore the target cache; disable for jobs that never compile, such as a `cargo update` report, so the target archive is not downloaded for nothing (mirrors the save action's `save-target`) |
 
 Outputs: `dep-hash`, `profile-hash`, `registry-key`, `target-key`,
 `registry-paths` (resolved from `CARGO_HOME`, so the official `rust`
@@ -105,7 +112,35 @@ container images with `CARGO_HOME=/usr/local/cargo` are handled correctly),
 `registry-paths` may be omitted and is then resolved from `CARGO_HOME` again.
 `prune` (default `true`) removes local artifacts before saving; `manifests`
 supplies the manifests from which local package names are derived.
-`save-registry` and `save-target` toggle each cache independently.
+`save-registry` and `save-target` toggle each cache independently, mirroring the restore action's `restore-registry` and `restore-target`. When a restore toggle is off, that cache's `cache-hit` output is empty.
+
+## Setup
+
+```yaml
+  - uses: pylab-me/esg-action-rust/setup@v0.2.0
+    id: setup_rust
+    with:
+      toolchain: nightly-2026-10-01  # or read from rust-toolchain.toml
+      target: x86_64-unknown-linux-musl
+      components: rustfmt, clippy
+      system-packages: musl-tools     # apt, Linux only
+      python-version: '3.14'          # optional; provisioned only if missing
+```
+
+The setup action drives rustup directly and installs the toolchain
+with the requested target and components (profile `minimal` by
+default), setting it as the rustup default unless `set-default` is
+`false`. With no `toolchain` input it reads the channel from
+`rust-toolchain.toml` or a `rust-toolchain` file and falls back to
+`stable`. Its outputs — `toolchain`, `target`, `rustc-version` and,
+when requested, `python-path` — are meant to be fed into the restore
+action, as in the usage example above: the toolchain segment of the
+cache key is then the toolchain that was actually installed, and the
+two cannot drift apart.
+
+The scope is deliberately narrow: no `cargo-*` tools, no linkers or
+compiler caches, no multi-toolchain management. See
+[LIMITATIONS.md](LIMITATIONS.md) for the full boundary.
 
 ## How the keys are built
 
@@ -178,9 +213,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: pylab-me/esg-action-rust/cleanup@v0.1.1
+      - uses: pylab-me/esg-action-rust/cleanup@v0.2.0
         with:
-          max-age-hours: '24'
+          max-age-hours: '48'
           key-prefix: my-project-ci-
           dry-run: 'false'
 ```
@@ -190,8 +225,8 @@ A cache is deleted only when all of the following hold:
 - its key starts with the configured prefix (other tools' caches are never
   touched),
 - its last access — creation time as fallback — is older than
-  `max-age-hours` (**24 hours is a supported setting**, as is any other
-  value),
+  `max-age-hours` (**48 hours by default**; any other value can be
+  configured instead),
 - it is not among the newest `keep-latest-per-family` entries (default 1) of
   its key family, where a family is the key without its trailing hash
   segment. This protects the newest warm cache of every line from a strict
@@ -208,7 +243,7 @@ platform does not offer.
 
 Every action first probes for a Python of at least 3.14 (`python3.14`,
 `python3`, `python` on PATH) and only provisions one through
-`actions/setup-python@v5` with `python-version: '3.14'` when the probe finds
+`actions/setup-python@v7` with `python-version: '3.14'` when the probe finds
 nothing — for example inside the `rust:slim` container images, which ship no
 Python at all. All scripts use only the standard library (`tomllib`,
 `urllib`), so there is no pip install step and no supply chain beyond the
@@ -226,12 +261,13 @@ raw manifest and lockfile bytes, emits a workflow warning and sets the
   the repository quota for caches that outlive a branch.
 - Give only the cleanup job `actions: write`; build jobs need nothing beyond
   the default cache access.
-- Pin a release tag (`@v0.1.0`) for production workflows.
+- Pin a release tag (`@v0.2.0`) for production workflows.
 
 ## Repository layout
 
 ```
 action.yml                  restore action (composite)
+setup/action.yml            setup action (composite)
 save/action.yml             save action (composite)
 cleanup/action.yml          cleanup action (composite)
 scripts/keygen.py           TOML normalisation, profile hash, key construction
@@ -239,13 +275,15 @@ scripts/prune_target.py     target directory pruning before save
 scripts/cleanup.py          expired-cache selection and deletion (REST API)
 scripts/paths.py            CARGO_HOME-aware registry path resolution
 tests/                      unit tests and the cross-platform fixture
+LIMITATIONS.md              what the suite deliberately does not do
 examples/                   migrated CI workflow and scheduled cleanup
 .github/workflows/selftest.yml
 ```
 
-The self-test runs the unit tests on Python 3.14, parses every YAML file, and
-computes the fixture's dependency hash on Ubuntu, Windows and macOS runners,
-failing unless all three platforms produce one identical hash.
+The self-test runs the unit tests on Python 3.14, parses every YAML file,
+smoke-tests the setup action on Ubuntu, Windows and macOS, and computes the
+fixture's dependency hash on all three, failing unless all three platforms
+produce one identical hash.
 
 ## Versioning
 

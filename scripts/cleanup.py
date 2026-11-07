@@ -6,7 +6,7 @@ Requires Python 3.14+. Standard library only (REST API via urllib).
 GitHub already evicts caches unused for 7 days and enforces a per-repo
 size quota, so this tool targets what the platform does not do:
 removing *superseded* generations and enforcing a caller-chosen age
-limit -- down to 24 hours -- for caches owned by cargo-cache-action.
+limit -- 48 hours by default -- for caches owned by esg-action-rust.
 
 Selection rules (all must hold for a deletion):
 
@@ -16,7 +16,7 @@ Selection rules (all must hold for a deletion):
 * it is not among the newest ``--keep-latest-per-family`` entries of its
   key family (a family is the key with its trailing hash segment
   removed), so the newest warm cache of every line survives even a
-  strict 24-hour rule; set the keep count to 0 for an unconditional
+  strict age rule; set the keep count to 0 for an unconditional
   age cutoff.
 
 An optional ``--max-total-gb`` budget additionally deletes the
@@ -126,7 +126,7 @@ def main(argv: list[str]) -> int:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
-    parser.add_argument("--max-age-hours", type=float, default=24.0)
+    parser.add_argument("--max-age-hours", type=float, default=48.0)
     parser.add_argument("--key-prefix", default="cargo-")
     parser.add_argument("--keep-latest-per-family", type=int, default=1)
     parser.add_argument("--max-total-gb", type=float, default=0.0)
