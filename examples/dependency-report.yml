@@ -1,0 +1,113 @@
+name: Rust Dependency Version Report
+
+# Standalone template: copy this file into your repository's
+# .github/workflows/ directory. Once a week it runs `cargo update`
+# in dry-report fashion and writes which dependencies would move,
+# and which newer versions exist, into the job's step summary.
+# Nothing is committed and no lockfile is changed in the repository:
+# the update happens in the runner's throwaway checkout only.
+#
+# The job also syncs the shared registry cache (restore before,
+# save after, registry only — it never compiles). The downloads the
+# update performs pre-warm the next build, provided `key-prefix`
+# below matches the prefix your build workflows use.
+#
+# This file is deliberately independent of the cache-cleanup
+# example: take either template, both, or neither. Cache expiry is
+# handled by examples/cache-cleanup.yml on its own schedule.
+#
+# The schedule is a plain weekly cron. Less frequent reporting is
+# a cron edit away for most projects; exact multi-week intervals
+# cannot be expressed in GitHub cron syntax and are left to the
+# projects that need them.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "13 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust nightly
+        id: setup_rust
+        uses: pylab-me/esg-action-rust/setup@v0.2.1
+        with:
+          toolchain: nightly
+
+      # The registry key contains no profile segment, so this job
+      # shares the registry cache with the build workflows as long
+      # as key-prefix matches theirs.
+      - name: Restore Cargo registry cache
+        id: cargo_cache
+        uses: pylab-me/esg-action-rust@v0.2.1
+        with:
+          key-prefix: cargo # must match the build workflows' prefix
+          toolchain: ${{ steps.setup_rust.outputs.toolchain }}
+          restore-target: 'false'
+
+      - name: Check dependency versions
+        shell: bash
+        env:
+          ESG_TC: ${{ steps.setup_rust.outputs.toolchain }}
+        run: |
+          set -euo pipefail
+
+          if [[ -f Cargo.lock ]]; then
+            lock_state="present"
+          else
+            lock_state="absent"
+          fi
+
+          CARGO_TERM_COLOR=never cargo +"${ESG_TC}" update --verbose 2>&1 | tee "$RUNNER_TEMP/cargo-update.log"
+
+          {
+            echo "## Rust dependency version report"
+            echo
+            echo "Command: \`cargo +${ESG_TC} update --verbose\`"
+            echo
+            if [[ "$lock_state" == "absent" ]]; then
+              echo "No original Cargo.lock: this is a new dependency resolution, not a before/after upgrade comparison."
+            else
+              echo "Cargo.lock present: Cargo reports changes relative to the existing lockfile."
+            fi
+            echo
+            echo "### Updates and newer available versions reported by Cargo"
+            echo
+            echo '```text'
+            if ! awk '
+              /^[[:space:]]*(Updating|Unchanged|Adding|Downgrading)[[:space:]]/ &&
+                (/\(available: / || / -> /) { print; found = 1 }
+              END { if (!found) print "No updates or newer available versions reported by Cargo." }
+            ' "$RUNNER_TEMP/cargo-update.log"; then
+              echo "Unable to parse Cargo output."
+            fi
+            echo '```'
+            echo
+            echo "Note: \`(available: ...)\` reports alternatives; it does not guarantee compatibility with current Cargo.toml constraints."
+            echo "The complete Cargo output is available in this job's logs."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Registry only (save-target: false). The key was computed
+      # from the pre-update manifests and lockfile, which is correct
+      # for the registry: crate files are content-addressed, so the
+      # downloads `cargo update` just made pre-warm the next build
+      # under the current key. If that key already has a cache, the
+      # save is skipped by actions/cache instead of overwriting it.
+      - name: Save Cargo registry cache
+        if: github.ref_name == github.event.repository.default_branch
+        uses: pylab-me/esg-action-rust/save@v0.2.1
+        with:
+          registry-key: ${{ steps.cargo_cache.outputs.registry-key }}
+          target-key: ${{ steps.cargo_cache.outputs.target-key }}
+          registry-paths: ${{ steps.cargo_cache.outputs.registry-paths }}
+          save-target: 'false'
