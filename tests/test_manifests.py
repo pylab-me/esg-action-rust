@@ -52,6 +52,14 @@ class ManifestTests(unittest.TestCase):
         for output in ("toolchain:", "target:", "rustc-version:"):
             self.assertIn(output, text)
 
+    def test_setup_reports_toolchain_sources(self):
+        text = manifest_text(ROOT / "setup" / "action.yml")
+        self.assertIn("toolchain-source:", text)
+        self.assertIn("Toolchain sources disagree", text)
+        self.assertIn("priority: input > rust-toolchain.toml", text)
+        self.assertIn("does not read from the file", text)
+        self.assertIn("using the default 'stable'", text)
+
     def test_save_toggles_gate_both_save_steps(self):
         text = manifest_text(ROOT / "save" / "action.yml")
         self.assertIn("if: inputs.save-registry == 'true'", text)

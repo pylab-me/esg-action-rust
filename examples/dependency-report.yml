@@ -40,7 +40,7 @@ jobs:
 
       - name: Set up Rust nightly
         id: setup_rust
-        uses: pylab-me/esg-action-rust/setup@v0.2.1
+        uses: pylab-me/esg-action-rust/setup@v0.2.2
         with:
           toolchain: nightly
 
@@ -49,7 +49,7 @@ jobs:
       # as key-prefix matches theirs.
       - name: Restore Cargo registry cache
         id: cargo_cache
-        uses: pylab-me/esg-action-rust@v0.2.1
+        uses: pylab-me/esg-action-rust@v0.2.2
         with:
           key-prefix: cargo # must match the build workflows' prefix
           toolchain: ${{ steps.setup_rust.outputs.toolchain }}
@@ -105,7 +105,7 @@ jobs:
       # save is skipped by actions/cache instead of overwriting it.
       - name: Save Cargo registry cache
         if: github.ref_name == github.event.repository.default_branch
-        uses: pylab-me/esg-action-rust/save@v0.2.1
+        uses: pylab-me/esg-action-rust/save@v0.2.2
         with:
           registry-key: ${{ steps.cargo_cache.outputs.registry-key }}
           target-key: ${{ steps.cargo_cache.outputs.target-key }}

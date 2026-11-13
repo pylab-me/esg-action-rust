@@ -43,13 +43,13 @@ jobs:
 
       - name: Set up pinned nightly
         id: setup_rust
-        uses: pylab-me/esg-action-rust/setup@v0.2.1
+        uses: pylab-me/esg-action-rust/setup@v0.2.2
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Restore Cargo caches
         id: cargo_cache
-        uses: pylab-me/esg-action-rust@v0.2.1
+        uses: pylab-me/esg-action-rust@v0.2.2
         with:
           key-prefix: edge-gateway-ci
           profile-name: ci
@@ -72,7 +72,7 @@ jobs:
 
       - name: Save Cargo caches
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: pylab-me/esg-action-rust/save@v0.2.1
+        uses: pylab-me/esg-action-rust/save@v0.2.2
         with:
           registry-key: ${{ steps.cargo_cache.outputs.registry-key }}
           target-key: ${{ steps.cargo_cache.outputs.target-key }}

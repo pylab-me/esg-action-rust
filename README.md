@@ -27,10 +27,10 @@ removes all three.
 
 | Action | Reference | Purpose |
 | --- | --- | --- |
-| setup | `pylab-me/esg-action-rust/setup@v0.2.1` | Provision the Rust toolchain, target, components and optional system packages and Python |
-| restore | `pylab-me/esg-action-rust@v0.2.1` | Compute keys, restore the registry and target caches |
-| save | `pylab-me/esg-action-rust/save@v0.2.1` | Prune local build products, save both caches under the same keys |
-| cleanup | `pylab-me/esg-action-rust/cleanup@v0.2.1` | Delete expired caches owned by this action |
+| setup | `pylab-me/esg-action-rust/setup@v0.2.2` | Provision the Rust toolchain, target, components and optional system packages and Python |
+| restore | `pylab-me/esg-action-rust@v0.2.2` | Compute keys, restore the registry and target caches |
+| save | `pylab-me/esg-action-rust/save@v0.2.2` | Prune local build products, save both caches under the same keys |
+| cleanup | `pylab-me/esg-action-rust/cleanup@v0.2.2` | Delete expired caches owned by this action |
 
 Composite actions have no post-job hook — that is a JavaScript action
 capability — so save is an explicit second step at the end of the job rather
@@ -48,7 +48,7 @@ steps:
 
   - name: Set up the Rust toolchain
     id: setup_rust
-    uses: pylab-me/esg-action-rust/setup@v0.2.1
+    uses: pylab-me/esg-action-rust/setup@v0.2.2
     with:
       toolchain: nightly-2026-10-01
       target: ${{ env.TARGET }}        # optional
@@ -56,7 +56,7 @@ steps:
 
   - name: Restore Cargo caches
     id: cargo_cache
-    uses: pylab-me/esg-action-rust@v0.2.1
+    uses: pylab-me/esg-action-rust@v0.2.2
     with:
       key-prefix: my-project-ci
       profile-name: ci                 # ci | release | debug | any label
@@ -74,7 +74,7 @@ steps:
 
   - name: Save Cargo caches
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    uses: pylab-me/esg-action-rust/save@v0.2.1
+    uses: pylab-me/esg-action-rust/save@v0.2.2
     with:
       registry-key: ${{ steps.cargo_cache.outputs.registry-key }}
       target-key: ${{ steps.cargo_cache.outputs.target-key }}
@@ -117,7 +117,7 @@ supplies the manifests from which local package names are derived.
 ## Setup
 
 ```yaml
-  - uses: pylab-me/esg-action-rust/setup@v0.2.1
+  - uses: pylab-me/esg-action-rust/setup@v0.2.2
     id: setup_rust
     with:
       toolchain: nightly-2026-10-01  # or read from rust-toolchain.toml
@@ -132,11 +132,21 @@ with the requested target and components (profile `minimal` by
 default), setting it as the rustup default unless `set-default` is
 `false`. With no `toolchain` input it reads the channel from
 `rust-toolchain.toml` or a `rust-toolchain` file and falls back to
-`stable`. Its outputs — `toolchain`, `target`, `rustc-version` and,
-when requested, `python-path` — are meant to be fed into the restore
-action, as in the usage example above: the toolchain segment of the
-cache key is then the toolchain that was actually installed, and the
-two cannot drift apart.
+`stable`. Its outputs — `toolchain`, `target`, `rustc-version`,
+`toolchain-source` and, when requested, `python-path` — are meant
+to be fed into the restore action, as in the usage example above:
+the toolchain segment of the cache key is then the toolchain that
+was actually installed, and the two cannot drift apart.
+
+Resolution is transparent about where the toolchain came from. All
+three sources are read before one is chosen, and when more than one
+names a toolchain the step reports every value: agreement is a
+notice, disagreement is a warning that lists each source and the
+one adopted under the priority order. Falling back to `stable`
+because nothing named a toolchain is announced as a default, never
+silent. A `rust-toolchain.toml` that also declares components,
+targets or a profile warns as well: only the channel is read from
+the file, the rest belongs in the action's inputs.
 
 The scope is deliberately narrow: no `cargo-*` tools, no linkers or
 compiler caches, no multi-toolchain management. See
@@ -213,7 +223,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: pylab-me/esg-action-rust/cleanup@v0.2.1
+      - uses: pylab-me/esg-action-rust/cleanup@v0.2.2
         with:
           max-age-hours: '48'
           key-prefix: my-project-ci-
@@ -261,7 +271,7 @@ raw manifest and lockfile bytes, emits a workflow warning and sets the
   the repository quota for caches that outlive a branch.
 - Give only the cleanup job `actions: write`; build jobs need nothing beyond
   the default cache access.
-- Pin a release tag (`@v0.2.1`) for production workflows.
+- Pin a release tag (`@v0.2.2`) for production workflows.
 
 ## Repository layout
 

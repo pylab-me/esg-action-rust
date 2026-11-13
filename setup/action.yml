@@ -45,6 +45,9 @@ outputs:
   toolchain:
     description: The toolchain that was resolved and installed.
     value: ${{ steps.resolve.outputs.toolchain }}
+  toolchain-source:
+    description: Where the resolved toolchain came from (input, rust-toolchain.toml, rust-toolchain, or default when no source named one).
+    value: ${{ steps.resolve.outputs.toolchain-source }}
   target:
     description: The target triple that was requested and added.
     value: ${{ steps.resolve.outputs.target }}
@@ -65,19 +68,59 @@ runs:
         ESG_TOOLCHAIN: ${{ inputs.toolchain }}
         ESG_TARGET: ${{ inputs.target }}
       run: |
-        tc="${ESG_TOOLCHAIN}"
-        if [ -z "${tc}" ] && [ -f rust-toolchain.toml ]; then
-          tc="$(sed -nE 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' rust-toolchain.toml | head -n 1)"
+        # Collect every source before choosing: the user should be
+        # able to see what named a toolchain and what was overruled,
+        # not just the value that won.
+        tc_input="${ESG_TOOLCHAIN}"
+        tc_toml=""
+        toml_extra=""
+        if [ -f rust-toolchain.toml ]; then
+          tc_toml="$(sed -nE 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' rust-toolchain.toml | head -n 1)"
+          toml_extra="$(grep -oE '^[[:space:]]*(components|targets|profile)[[:space:]]*=' rust-toolchain.toml | sed -E 's/[[:space:]=]+//g' | paste -sd ',' - | sed 's/,$//' || true)"
         fi
-        if [ -z "${tc}" ] && [ -f rust-toolchain ]; then
-          tc="$(head -n 1 rust-toolchain | tr -d '[:space:]')"
+        tc_file=""
+        if [ -f rust-toolchain ]; then
+          tc_file="$(head -n 1 rust-toolchain | tr -d '[:space:]')"
         fi
-        if [ -z "${tc}" ]; then
-          tc="stable"
+
+        sources=()
+        values=()
+        if [ -n "${tc_input}" ]; then sources+=("input"); values+=("${tc_input}"); fi
+        if [ -n "${tc_toml}" ]; then sources+=("rust-toolchain.toml"); values+=("${tc_toml}"); fi
+        if [ -n "${tc_file}" ]; then sources+=("rust-toolchain"); values+=("${tc_file}"); fi
+
+        if [ -n "${tc_input}" ]; then
+          tc="${tc_input}"; source="input"
+        elif [ -n "${tc_toml}" ]; then
+          tc="${tc_toml}"; source="rust-toolchain.toml"
+        elif [ -n "${tc_file}" ]; then
+          tc="${tc_file}"; source="rust-toolchain"
+        else
+          tc="stable"; source="default"
         fi
+
+        if [ "${#sources[@]}" -gt 1 ]; then
+          listing=""
+          for i in "${!sources[@]}"; do
+            listing="${listing:+${listing}, }${sources[$i]}='${values[$i]}'"
+          done
+          distinct="$(printf '%s\n' "${values[@]}" | sort -u | wc -l | tr -d ' ')"
+          if [ "${distinct}" -gt 1 ]; then
+            echo "::warning::Toolchain sources disagree: ${listing}. Using '${tc}' from ${source} (priority: input > rust-toolchain.toml > rust-toolchain > stable)."
+          else
+            echo "::notice::Multiple toolchain sources agree on '${tc}' (${listing})."
+          fi
+        elif [ "${#sources[@]}" -eq 0 ]; then
+          echo "::notice::No toolchain named by the input or a toolchain file; using the default 'stable'."
+        fi
+        if [ -n "${toml_extra}" ]; then
+          echo "::warning::rust-toolchain.toml declares ${toml_extra}, which setup does not read from the file; pass them through the components, target and profile inputs instead."
+        fi
+
         echo "toolchain=${tc}" >> "${GITHUB_OUTPUT}"
+        echo "toolchain-source=${source}" >> "${GITHUB_OUTPUT}"
         echo "target=${ESG_TARGET}" >> "${GITHUB_OUTPUT}"
-        echo "Resolved toolchain: ${tc}"
+        echo "Resolved toolchain: ${tc} (source: ${source})"
 
     - name: Install system packages
       if: inputs.system-packages != ''
@@ -141,6 +184,7 @@ runs:
       shell: bash
       env:
         ESG_TC: ${{ steps.resolve.outputs.toolchain }}
+        ESG_TC_SOURCE: ${{ steps.resolve.outputs.toolchain-source }}
       run: |
         set -euo pipefail
         rustc_version="$(rustc +"${ESG_TC}" --version)"
@@ -151,7 +195,7 @@ runs:
         {
           echo "### esg setup"
           echo
-          echo "- toolchain: \`${ESG_TC}\`"
+          echo "- toolchain: \`${ESG_TC}\` (source: ${ESG_TC_SOURCE})"
           echo "- rustc: \`${rustc_version}\`"
         } >> "${GITHUB_STEP_SUMMARY}"
 
